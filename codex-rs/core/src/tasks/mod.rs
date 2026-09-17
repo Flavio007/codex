@@ -1,5 +1,6 @@
 mod compact;
 mod lifecycle;
+mod pipeline;
 mod regular;
 mod review;
 mod user_shell;
@@ -60,6 +61,7 @@ use codex_features::Feature;
 use codex_protocol::error::CodexErrorDetails;
 use codex_protocol::error::Result as CodexResult;
 pub(crate) use compact::CompactTask;
+pub(crate) use pipeline::PipelineTask;
 pub(crate) use regular::RegularTask;
 pub(crate) use review::ReviewTask;
 pub(crate) use user_shell::UserShellCommandMode;

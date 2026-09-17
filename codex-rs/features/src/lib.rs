@@ -203,6 +203,8 @@ pub enum Feature {
     Collab,
     /// Enable task-path-based multi-agent routing.
     MultiAgentV2,
+    /// Enable experimental adaptive model pipeline.
+    AdaptivePipeline,
     /// Removed compatibility flag retained as a no-op.
     MultiAgentMode,
     /// Removed compatibility flag for the deleted agent-job tools.
@@ -1301,6 +1303,16 @@ pub const FEATURES: &[FeatureSpec] = &[
         id: Feature::MultiAgentV2,
         key: "multi_agent_v2",
         stage: Stage::Stable,
+        default_enabled: false,
+    },
+    FeatureSpec {
+        id: Feature::AdaptivePipeline,
+        key: "adaptive_pipeline",
+        stage: Stage::Experimental {
+            name: "Adaptive Model Pipeline",
+            menu_description: "Run multi-phase adaptive pipeline with context builder, compaction, and architect/workers",
+            announcement: "",
+        },
         default_enabled: false,
     },
     FeatureSpec {

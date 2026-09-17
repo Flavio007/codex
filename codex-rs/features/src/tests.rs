@@ -877,3 +877,20 @@ code_mode = true
         message
     );
 }
+
+#[test]
+fn adaptive_pipeline_resolves_from_toml() {
+    let configured_features: FeaturesToml = toml::from_str(
+        r#"
+adaptive_pipeline = true
+"#,
+    )
+    .expect("features table should deserialize");
+
+    let mut features = Features::with_defaults();
+    assert_eq!(features.enabled(Feature::AdaptivePipeline), false);
+
+    let entries = configured_features.entries();
+    features.apply_map(&entries);
+    assert_eq!(features.enabled(Feature::AdaptivePipeline), true);
+}

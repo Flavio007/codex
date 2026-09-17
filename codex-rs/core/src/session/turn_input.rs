@@ -21,7 +21,9 @@ use super::turn_context::TurnContext;
 use crate::context::GuardianContextMode;
 use crate::state::ActiveTurn;
 use crate::state::TurnState;
+use crate::tasks::PipelineTask;
 use crate::tasks::RegularTask;
+use codex_features::Feature;
 use codex_history::CodexHarnessMetadata;
 use codex_history::ResponseItemEnvelope;
 use codex_protocol::config_types::ModeKind;
@@ -358,9 +360,15 @@ async fn start_or_steer(
             if has_explicit_input {
                 task_input.push(pending_turn_input(session, input, &turn_context.sub_id).await);
             }
-            session
-                .spawn_task(turn_context, task_input, RegularTask::new())
-                .await;
+            if turn_context.config.features.enabled(Feature::AdaptivePipeline) {
+                session
+                    .spawn_task(turn_context, task_input, PipelineTask::new())
+                    .await;
+            } else {
+                session
+                    .spawn_task(turn_context, task_input, RegularTask::new())
+                    .await;
+            }
             Ok(TurnInputSubmission::Started {
                 turn_id: submission_id,
             })
@@ -504,9 +512,15 @@ async fn start_if_idle(
             }
         }
     }
-    session
-        .start_task(turn_context, task_input, RegularTask::new())
-        .await;
+    if turn_context.config.features.enabled(Feature::AdaptivePipeline) {
+        session
+            .start_task(turn_context, task_input, PipelineTask::new())
+            .await;
+    } else {
+        session
+            .start_task(turn_context, task_input, RegularTask::new())
+            .await;
+    }
     Ok(TurnInputSubmission::Started {
         turn_id: submission_id,
     })
@@ -649,7 +663,7 @@ impl Session {
         }
 
         match active_task.kind {
-            crate::state::TaskKind::Regular => {}
+            crate::state::TaskKind::Regular | crate::state::TaskKind::Pipeline => {}
             crate::state::TaskKind::Review => {
                 return Err(NotSubmittedReason::ActiveTurnNotSteerable {
                     turn_kind: NonSteerableTurnKind::Review,

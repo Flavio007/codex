@@ -1065,6 +1065,9 @@ pub struct Config {
     /// Settings specific to the task-path-based multi-agent tool surface.
     pub multi_agent_v2: MultiAgentV2Config,
 
+    /// Settings specific to the experimental multi-model adaptive pipeline.
+    pub adaptive_pipeline: AdaptivePipelineConfig,
+
     /// Context-window token budget configuration, when enabled.
     pub token_budget: Option<TokenBudgetConfig>,
     /// Runtime snapshot of configured token-budget preferences before startup activation.
@@ -1332,6 +1335,27 @@ impl Default for MultiAgentV2Config {
         Self::defaults_for_max_concurrency(
             DEFAULT_MULTI_AGENT_V2_MAX_CONCURRENT_THREADS_PER_SESSION,
         )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AdaptivePipelineConfig {
+    pub context_model: String,
+    pub architect_model: String,
+    pub worker_model: String,
+    pub compact_before_architect: bool,
+    pub context_threshold: usize,
+}
+
+impl Default for AdaptivePipelineConfig {
+    fn default() -> Self {
+        Self {
+            context_model: "gpt-5.6-luna".to_string(),
+            architect_model: "gpt-6-astra".to_string(),
+            worker_model: "gpt-5.6-terra".to_string(),
+            compact_before_architect: true,
+            context_threshold: 30000,
+        }
     }
 }
 
@@ -2776,6 +2800,28 @@ fn resolve_multi_agent_v2_config(config_toml: &ConfigToml) -> MultiAgentV2Config
     }
 }
 
+fn resolve_adaptive_pipeline_config(config_toml: &ConfigToml) -> AdaptivePipelineConfig {
+    let base = config_toml.adaptive_pipeline.as_ref();
+    let default = AdaptivePipelineConfig::default();
+    AdaptivePipelineConfig {
+        context_model: base
+            .and_then(|c| c.context_model.clone())
+            .unwrap_or(default.context_model),
+        architect_model: base
+            .and_then(|c| c.architect_model.clone())
+            .unwrap_or(default.architect_model),
+        worker_model: base
+            .and_then(|c| c.worker_model.clone())
+            .unwrap_or(default.worker_model),
+        compact_before_architect: base
+            .and_then(|c| c.compact_before_architect)
+            .unwrap_or(default.compact_before_architect),
+        context_threshold: base
+            .and_then(|c| c.context_threshold)
+            .unwrap_or(default.context_threshold),
+    }
+}
+
 pub(crate) fn resolve_token_budget_config(
     config_toml: &ConfigToml,
     features: &ManagedFeatures,
@@ -3697,6 +3743,7 @@ impl Config {
         };
         let code_mode = resolve_code_mode_config(&cfg);
         let multi_agent_v2 = resolve_multi_agent_v2_config(&cfg);
+        let adaptive_pipeline = resolve_adaptive_pipeline_config(&cfg);
         let token_budget = resolve_token_budget_config(&cfg, &features)?;
         let rollout_budget = resolve_rollout_budget_config(&cfg, &features)?;
         let current_time_reminder = resolve_current_time_reminder_config(&cfg, &features)?;
@@ -4337,6 +4384,7 @@ impl Config {
             thread_unload_delay,
             ghost_snapshot,
             multi_agent_v2,
+            adaptive_pipeline,
             token_budget,
             token_budget_startup_config: None,
             rollout_budget,

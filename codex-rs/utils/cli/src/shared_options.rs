@@ -74,6 +74,19 @@ pub struct SharedCliOptions {
     /// Additional directories that should be writable alongside the primary workspace.
     #[arg(long = "add-dir", value_name = "DIR", value_hint = clap::ValueHint::DirPath)]
     pub add_dir: Vec<PathBuf>,
+
+    /// Execution pipeline mode: `off` (standard single model) or `adaptive` (multi-phase adaptive pipeline).
+    #[arg(long = "pipeline", value_enum)]
+    pub pipeline: Option<PipelineModeCliArg>,
+}
+
+/// Pipeline mode command-line argument for A/B testing.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PipelineModeCliArg {
+    /// Disable adaptive model pipeline (standard single-turn agent).
+    Off,
+    /// Enable multi-phase adaptive pipeline (Context Builder -> Compaction -> Architect -> Workers).
+    Adaptive,
 }
 
 impl SharedCliOptions {
@@ -89,6 +102,21 @@ impl SharedCliOptions {
                 .raw_overrides
                 .push(r#"sandbox_mode="workspace-write""#.to_string());
             self.auto_review = false;
+        }
+        if let Some(pipeline) = self.pipeline {
+            match pipeline {
+                PipelineModeCliArg::Off => {
+                    overrides
+                        .raw_overrides
+                        .push(r#"features.adaptive_pipeline=false"#.to_string());
+                }
+                PipelineModeCliArg::Adaptive => {
+                    overrides
+                        .raw_overrides
+                        .push(r#"features.adaptive_pipeline=true"#.to_string());
+                }
+            }
+            self.pipeline = None;
         }
     }
 
@@ -109,6 +137,7 @@ impl SharedCliOptions {
             cwd,
             worktree,
             add_dir,
+            pipeline,
         } = self;
         let Self {
             images: root_images,
@@ -123,7 +152,12 @@ impl SharedCliOptions {
             cwd: root_cwd,
             worktree: root_worktree,
             add_dir: root_add_dir,
+            pipeline: root_pipeline,
         } = root;
+
+        if pipeline.is_none() {
+            pipeline.clone_from(root_pipeline);
+        }
 
         if model.is_none() {
             model.clone_from(root_model);
@@ -179,7 +213,12 @@ impl SharedCliOptions {
             cwd,
             worktree,
             add_dir,
+            pipeline,
         } = subcommand;
+
+        if let Some(pipeline) = pipeline {
+            self.pipeline = Some(pipeline);
+        }
 
         if let Some(model) = model {
             self.model = Some(model);

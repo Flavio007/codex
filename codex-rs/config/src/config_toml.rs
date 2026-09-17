@@ -189,6 +189,10 @@ pub struct ConfigToml {
 
     pub computer_use: Option<ComputerUseConfigToml>,
 
+    /// Configuration for experimental multi-model adaptive pipeline.
+    #[serde(default)]
+    pub adaptive_pipeline: Option<AdaptivePipelineConfigToml>,
+
     #[serde(default)]
     pub shell_environment_policy: ShellEnvironmentPolicyToml,
 
@@ -555,6 +559,26 @@ pub struct AutoReviewToml {
     pub policy: Option<String>,
     /// Experimental full Guardian prompt template containing the tenant policy placeholder.
     pub experimental_policy_template: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct AdaptivePipelineConfigToml {
+    /// Cheap exploration model used for initial context building. Default: "gpt-5.6-luna".
+    #[serde(default)]
+    pub context_model: Option<String>,
+    /// High-capability reasoning model used for architecture decisions. Default: "gpt-6-astra".
+    #[serde(default)]
+    pub architect_model: Option<String>,
+    /// Model used by task-specific workers. Default: "gpt-5.6-terra".
+    #[serde(default)]
+    pub worker_model: Option<String>,
+    /// Whether to run conversation compaction before invoking the architect. Default: true.
+    #[serde(default)]
+    pub compact_before_architect: Option<bool>,
+    /// Token threshold triggering compaction before architect handoff. Default: 30000.
+    #[serde(default)]
+    pub context_threshold: Option<usize>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
@@ -1070,4 +1094,29 @@ command = "   "
             )
         );
     }
+
+    #[test]
+    fn adaptive_pipeline_config_deserializes() {
+        let toml = r#"
+[features]
+adaptive_pipeline = true
+
+[adaptive_pipeline]
+context_model = "gpt-5.6-luna"
+architect_model = "gpt-6-astra"
+worker_model = "gpt-5.6-terra"
+compact_before_architect = true
+context_threshold = 30000
+"#;
+        let config: ConfigToml = toml::from_str(toml).expect("config should deserialize");
+        let pipeline = config
+            .adaptive_pipeline
+            .expect("adaptive_pipeline table should be present");
+        assert_eq!(pipeline.context_model.as_deref(), Some("gpt-5.6-luna"));
+        assert_eq!(pipeline.architect_model.as_deref(), Some("gpt-6-astra"));
+        assert_eq!(pipeline.worker_model.as_deref(), Some("gpt-5.6-terra"));
+        assert_eq!(pipeline.compact_before_architect, Some(true));
+        assert_eq!(pipeline.context_threshold, Some(30000));
+    }
 }
+

@@ -49,6 +49,7 @@ pub const CONFIG_TOML_FILE: &str = "config.toml";
 
 pub use application_requirements::ApplicationNetworkRequirementsToml;
 pub use application_requirements::ApplicationRequirementsToml;
+pub use config_toml::AdaptivePipelineConfigToml;
 pub use auth_policy::ManagedAuthPolicy;
 pub use browser_computer_use_requirements::AllowDenyRequirementToml;
 pub use browser_computer_use_requirements::BrowserUseAccessApprovalLifetimeToml;

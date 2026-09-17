@@ -94,6 +94,7 @@ pub use mention_syntax::TOOL_MENTION_SIGIL;
 pub use utils::path_utils;
 pub(crate) mod plugins;
 pub use plugins::plugins_manager_for_config;
+pub mod pipeline;
 #[doc(hidden)]
 pub(crate) mod prompt_debug;
 #[doc(hidden)]

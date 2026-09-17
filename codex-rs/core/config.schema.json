@@ -6,6 +6,34 @@
       "description": "A path that is guaranteed to be absolute and normalized (though it is not guaranteed to be canonicalized or exist on the filesystem).\n\nIMPORTANT: When deserializing an `AbsolutePathBuf`, a base path must be set using [AbsolutePathBufGuard::new]. If no base path is set, the deserialization will fail unless the path being deserialized is already absolute.",
       "type": "string"
     },
+    "AdaptivePipelineConfigToml": {
+      "additionalProperties": false,
+      "properties": {
+        "architect_model": {
+          "description": "High-capability reasoning model used for architecture decisions. Default: \"gpt-6-astra\".",
+          "type": "string"
+        },
+        "compact_before_architect": {
+          "description": "Whether to run conversation compaction before invoking the architect. Default: true.",
+          "type": "boolean"
+        },
+        "context_model": {
+          "description": "Cheap exploration model used for initial context building. Default: \"gpt-5.6-luna\".",
+          "type": "string"
+        },
+        "context_threshold": {
+          "description": "Token threshold triggering compaction before architect handoff. Default: 30000.",
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "worker_model": {
+          "description": "Model used by task-specific workers. Default: \"gpt-5.6-terra\".",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "AgentRoleToml": {
       "additionalProperties": false,
       "properties": {
@@ -646,6 +674,9 @@
           "default": null,
           "description": "Optional feature toggles scoped to this profile.",
           "properties": {
+            "adaptive_pipeline": {
+              "type": "boolean"
+            },
             "analytics_plan_history": {
               "type": "boolean"
             },
@@ -6138,6 +6169,15 @@
   },
   "description": "Base config deserialized from ~/.codex/config.toml.",
   "properties": {
+    "adaptive_pipeline": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/AdaptivePipelineConfigToml"
+        }
+      ],
+      "default": null,
+      "description": "Configuration for experimental multi-model adaptive pipeline."
+    },
     "agents": {
       "allOf": [
         {
@@ -6304,6 +6344,9 @@
       "default": null,
       "description": "Centralized feature flags (new). Prefer this over individual toggles.",
       "properties": {
+        "adaptive_pipeline": {
+          "type": "boolean"
+        },
         "analytics_plan_history": {
           "type": "boolean"
         },
