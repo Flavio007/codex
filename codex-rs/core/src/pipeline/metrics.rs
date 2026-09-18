@@ -87,8 +87,11 @@ impl PhaseMetrics {
 /// Token metrics for the pre-architect compaction step.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompactMetrics {
+    pub mode: String,
     pub before_tokens: i64,
     pub after_tokens: i64,
+    pub duration_ms: u64,
+    pub implementation: String,
 }
 
 impl CompactMetrics {
@@ -101,11 +104,22 @@ impl CompactMetrics {
     }
 }
 
+/// Metrics for the architect auto-selection phase.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArchitectSelectionMetrics {
+    pub mode: String,
+    pub score: Option<u32>,
+    pub initially_selected: String,
+    pub final_model: String,
+    pub escalations: usize,
+}
+
 /// Consolidated metrics across the entire adaptive pipeline execution.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PipelineMetrics {
     pub context_builder: Option<PhaseMetrics>,
     pub compact: Option<CompactMetrics>,
+    pub architect_selection: Option<ArchitectSelectionMetrics>,
     pub architect: Option<PhaseMetrics>,
     pub workers: Vec<PhaseMetrics>,
     pub total_wall_time_ms: u64,
@@ -132,20 +146,31 @@ impl PipelineMetrics {
         cb + ar + wk
     }
 
+    pub fn total_cached_tokens(&self) -> i64 {
+        let cb = self
+            .context_builder
+            .as_ref()
+            .map_or(0, |m| m.cached_input_tokens);
+        let ar = self.architect.as_ref().map_or(0, |m| m.cached_input_tokens);
+        let wk: i64 = self.workers.iter().map(|w| w.cached_input_tokens).sum();
+        cb + ar + wk
+    }
+
     pub fn total_tokens(&self) -> i64 {
         self.total_input_tokens() + self.total_output_tokens()
     }
 
     /// Tokens processed by expensive flagship model (Architect / Astra).
     pub fn expensive_model_tokens(&self) -> i64 {
-        self.architect.as_ref().map_or(0, PhaseMetrics::total_tokens)
+        self.architect
+            .as_ref()
+            .filter(|m| m.model.contains("astra") || m.model.contains("flagship"))
+            .map_or(0, PhaseMetrics::total_tokens)
     }
 
     /// Tokens processed by cheap exploration and worker models (Luna/Terra/Sol).
     pub fn cheap_model_tokens(&self) -> i64 {
-        let cb = self.context_builder.as_ref().map_or(0, PhaseMetrics::total_tokens);
-        let wk: i64 = self.workers.iter().map(PhaseMetrics::total_tokens).sum();
-        cb + wk
+        self.total_tokens().saturating_sub(self.expensive_model_tokens())
     }
 
     /// Percentage of total tokens processed by Astra (flagship model).
@@ -175,58 +200,100 @@ impl PipelineMetrics {
         total
     }
 
+    /// Computes estimated baseline cost if all tokens were processed by Astra.
+    pub fn equivalent_astra_cost(&self) -> f64 {
+        let total_in = self.total_input_tokens();
+        let total_out = self.total_output_tokens();
+        self.pricing.astra.compute_cost(total_in, total_out)
+    }
+
     /// Formats the summary output matching the requested specification.
     pub fn format_pipeline_stats(&self) -> String {
         let mut out = String::new();
-        out.push_str("Pipeline stats\n\n");
+        out.push_str("Adaptive Pipeline Stats\n\n");
 
         if let Some(cb) = &self.context_builder {
-            let label = if cb.model.is_empty() {
-                "Luna"
-            } else {
-                model_display_name(&cb.model)
-            };
-            out.push_str(&format!("{label}:\n"));
-            out.push_str(&format!("  {} input\n", format_thousands(cb.input_tokens)));
-            out.push_str(&format!("  {} output\n\n", format_thousands(cb.output_tokens)));
+            let label = model_display_name(&cb.model);
+            out.push_str("Scout\n");
+            out.push_str(&format!("  model: {label}\n"));
+            out.push_str(&format!("  input: {}\n", format_thousands(cb.input_tokens)));
+            out.push_str(&format!("  cached: {}\n", format_thousands(cb.cached_input_tokens)));
+            out.push_str(&format!("  output: {}\n", format_thousands(cb.output_tokens)));
+            out.push_str(&format!("  tools: {}\n\n", cb.tool_calls));
         }
 
         if let Some(compact) = &self.compact {
-            out.push_str("Compact:\n");
-            out.push_str(&format!(
-                "  {} → {}\n\n",
-                format_thousands(compact.before_tokens),
-                format_thousands(compact.after_tokens)
-            ));
+            out.push_str("Compaction\n");
+            out.push_str(&format!("  mode: {}\n", compact.mode));
+            out.push_str(&format!("  implementation: {}\n", compact.implementation));
+            out.push_str(&format!("  before: {}\n", format_thousands(compact.before_tokens)));
+            out.push_str(&format!("  after: {}\n", format_thousands(compact.after_tokens)));
+            out.push_str(&format!("  reduction: {:.1}%\n\n", compact.reduction_percent()));
+        }
+
+        if let Some(sel) = &self.architect_selection {
+            out.push_str("Architect selection\n");
+            out.push_str(&format!("  mode: {}\n", sel.mode));
+            if let Some(s) = sel.score {
+                out.push_str(&format!("  score: {s}\n"));
+            }
+            out.push_str(&format!("  selected: {}\n", model_display_name(&sel.final_model)));
+            out.push_str(&format!("  escalations: {}\n\n", sel.escalations));
         }
 
         if let Some(ar) = &self.architect {
-            let label = if ar.model.is_empty() {
-                "Astra"
-            } else {
-                model_display_name(&ar.model)
-            };
-            out.push_str(&format!("{label}:\n"));
-            out.push_str(&format!("  {} input\n", format_thousands(ar.input_tokens)));
-            out.push_str(&format!("  {} output\n\n", format_thousands(ar.output_tokens)));
+            let label = model_display_name(&ar.model);
+            out.push_str("Architect\n");
+            out.push_str(&format!("  model: {label}\n"));
+            out.push_str(&format!("  input: {}\n", format_thousands(ar.input_tokens)));
+            out.push_str(&format!("  cached: {}\n", format_thousands(ar.cached_input_tokens)));
+            out.push_str(&format!("  output: {}\n\n", format_thousands(ar.output_tokens)));
         }
 
         if !self.workers.is_empty() {
-            let worker_in: i64 = self.workers.iter().map(|w| w.input_tokens).sum();
-            let worker_out: i64 = self.workers.iter().map(|w| w.output_tokens).sum();
-            out.push_str("Terra workers:\n");
-            out.push_str(&format!("  {} input\n", format_thousands(worker_in)));
-            out.push_str(&format!("  {} output\n\n", format_thousands(worker_out)));
+            let mut luna_count = 0usize;
+            let mut terra_count = 0usize;
+            let mut sol_count = 0usize;
+            for w in &self.workers {
+                let name = w.model.to_lowercase();
+                if name.contains("luna") {
+                    luna_count += 1;
+                } else if name.contains("sol") {
+                    sol_count += 1;
+                } else {
+                    terra_count += 1;
+                }
+            }
+            out.push_str("Workers\n");
+            out.push_str(&format!("  Luna: {luna_count}\n"));
+            out.push_str(&format!("  Terra: {terra_count}\n"));
+            out.push_str(&format!("  Sol: {sol_count}\n\n"));
         }
 
-        out.push_str(&format!(
-            "Astra share:\n  {:.1}% of total processed tokens\n",
-            self.astra_share_percent()
-        ));
+        let total_in = self.total_input_tokens();
+        let total_out = self.total_output_tokens();
+        let total_cached = self.total_cached_tokens();
+        let total_uncached = total_in.saturating_sub(total_cached);
+        let model_calls = (if self.context_builder.is_some() { 1 } else { 0 })
+            + (if self.compact.is_some() { 1 } else { 0 })
+            + (if self.architect.is_some() { 1 } else { 0 })
+            + self.workers.len();
+        let total_tools = self.context_builder.as_ref().map_or(0, |m| m.tool_calls)
+            + self.architect.as_ref().map_or(0, |m| m.tool_calls)
+            + self.workers.iter().map(|w| w.tool_calls).sum::<usize>();
 
+        out.push_str("Total\n");
+        out.push_str(&format!("  input: {}\n", format_thousands(total_in)));
+        out.push_str(&format!("  output: {}\n", format_thousands(total_out)));
+        out.push_str(&format!("  cached: {}\n", format_thousands(total_cached)));
+        out.push_str(&format!("  uncached: {}\n", format_thousands(total_uncached)));
+        out.push_str(&format!("  wall time: {:.2}s\n", self.total_wall_time_ms as f64 / 1000.0));
+        out.push_str(&format!("  model calls: {model_calls}\n"));
+        out.push_str(&format!("  tool calls: {total_tools}\n"));
+        out.push_str(&format!("  estimated cost: ${:.4}\n", self.weighted_cost()));
         out.push_str(&format!(
-            "\nEstimated weighted cost: ${:.4}\n",
-            self.weighted_cost()
+            "  equivalent Astra cost: ${:.4}\n",
+            self.equivalent_astra_cost()
         ));
 
         out

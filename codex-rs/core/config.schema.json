@@ -9,26 +9,64 @@
     "AdaptivePipelineConfigToml": {
       "additionalProperties": false,
       "properties": {
+        "architect_auto_escalation": {
+          "description": "Whether auto architect selection allows escalation when task complexity exceeds model tier. Default: true.",
+          "type": "boolean"
+        },
+        "architect_auto_max": {
+          "description": "Maximum tier for auto architect selection. Default: \"gpt-6-astra\".",
+          "type": "string"
+        },
+        "architect_auto_min": {
+          "description": "Minimum tier for auto architect selection. Default: \"gpt-5.6-luna\".",
+          "type": "string"
+        },
         "architect_model": {
-          "description": "High-capability reasoning model used for architecture decisions. Default: \"gpt-6-astra\".",
+          "description": "High-capability reasoning model used for architecture decisions, or \"auto\". Default: \"auto\".",
           "type": "string"
         },
         "compact_before_architect": {
-          "description": "Whether to run conversation compaction before invoking the architect. Default: true.",
+          "description": "Legacy setting: whether to run conversation compaction before invoking the architect.",
           "type": "boolean"
+        },
+        "compact_mode": {
+          "description": "Compaction mode before architect handoff: \"off\", \"auto\", \"always\". Default: \"auto\".",
+          "type": "string"
+        },
+        "compact_threshold": {
+          "description": "Token threshold triggering compaction before architect handoff. Default: 30000.",
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
         },
         "context_model": {
           "description": "Cheap exploration model used for initial context building. Default: \"gpt-5.6-luna\".",
           "type": "string"
         },
         "context_threshold": {
-          "description": "Token threshold triggering compaction before architect handoff. Default: 30000.",
+          "description": "Legacy setting: token threshold triggering compaction before architect handoff.",
           "format": "uint",
           "minimum": 0.0,
           "type": "integer"
         },
+        "difficult_worker_model": {
+          "description": "Model used for difficult worker tasks. Default: \"gpt-5.6-sol\".",
+          "type": "string"
+        },
+        "handoff_mode": {
+          "description": "Handoff mode: \"summary\" (scout summary text) or \"compact\" (real compacted history fork). Default: \"compact\".",
+          "type": "string"
+        },
+        "normal_worker_model": {
+          "description": "Model used for normal worker tasks. Default: \"gpt-5.6-terra\".",
+          "type": "string"
+        },
+        "trivial_worker_model": {
+          "description": "Model used for trivial worker tasks. Default: \"gpt-5.6-luna\".",
+          "type": "string"
+        },
         "worker_model": {
-          "description": "Model used by task-specific workers. Default: \"gpt-5.6-terra\".",
+          "description": "Legacy fallback model used by task-specific workers. Default: \"gpt-5.6-terra\".",
           "type": "string"
         }
       },

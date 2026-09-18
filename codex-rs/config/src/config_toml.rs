@@ -567,18 +567,45 @@ pub struct AdaptivePipelineConfigToml {
     /// Cheap exploration model used for initial context building. Default: "gpt-5.6-luna".
     #[serde(default)]
     pub context_model: Option<String>,
-    /// High-capability reasoning model used for architecture decisions. Default: "gpt-6-astra".
+    /// High-capability reasoning model used for architecture decisions, or "auto". Default: "auto".
     #[serde(default)]
     pub architect_model: Option<String>,
-    /// Model used by task-specific workers. Default: "gpt-5.6-terra".
+    /// Compaction mode before architect handoff: "off", "auto", "always". Default: "auto".
     #[serde(default)]
-    pub worker_model: Option<String>,
-    /// Whether to run conversation compaction before invoking the architect. Default: true.
-    #[serde(default)]
-    pub compact_before_architect: Option<bool>,
+    pub compact_mode: Option<String>,
     /// Token threshold triggering compaction before architect handoff. Default: 30000.
     #[serde(default)]
+    pub compact_threshold: Option<usize>,
+    /// Minimum tier for auto architect selection. Default: "gpt-5.6-luna".
+    #[serde(default)]
+    pub architect_auto_min: Option<String>,
+    /// Maximum tier for auto architect selection. Default: "gpt-6-astra".
+    #[serde(default)]
+    pub architect_auto_max: Option<String>,
+    /// Whether auto architect selection allows escalation when task complexity exceeds model tier. Default: true.
+    #[serde(default)]
+    pub architect_auto_escalation: Option<bool>,
+    /// Model used for trivial worker tasks. Default: "gpt-5.6-luna".
+    #[serde(default)]
+    pub trivial_worker_model: Option<String>,
+    /// Model used for normal worker tasks. Default: "gpt-5.6-terra".
+    #[serde(default)]
+    pub normal_worker_model: Option<String>,
+    /// Model used for difficult worker tasks. Default: "gpt-5.6-sol".
+    #[serde(default)]
+    pub difficult_worker_model: Option<String>,
+    /// Legacy fallback model used by task-specific workers. Default: "gpt-5.6-terra".
+    #[serde(default)]
+    pub worker_model: Option<String>,
+    /// Legacy setting: whether to run conversation compaction before invoking the architect.
+    #[serde(default)]
+    pub compact_before_architect: Option<bool>,
+    /// Legacy setting: token threshold triggering compaction before architect handoff.
+    #[serde(default)]
     pub context_threshold: Option<usize>,
+    /// Handoff mode: "summary" (scout summary text) or "compact" (real compacted history fork). Default: "compact".
+    #[serde(default)]
+    pub handoff_mode: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
@@ -1119,4 +1146,3 @@ context_threshold = 30000
         assert_eq!(pipeline.context_threshold, Some(30000));
     }
 }
-

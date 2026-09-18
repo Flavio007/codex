@@ -75,4 +75,103 @@ fn worker_complexity_model_mapping() {
         WorkerComplexity::Normal.resolve_model("custom-terra"),
         "custom-terra"
     );
+
+    let mut config = AdaptivePipelineConfig::default();
+    config.trivial_worker_model = "custom-luna".to_string();
+    config.normal_worker_model = "custom-terra".to_string();
+    config.difficult_worker_model = "custom-sol".to_string();
+
+    assert_eq!(
+        WorkerComplexity::Trivial.resolve_model_from_config(&config),
+        "custom-luna"
+    );
+    assert_eq!(
+        WorkerComplexity::Normal.resolve_model_from_config(&config),
+        "custom-terra"
+    );
+    assert_eq!(
+        WorkerComplexity::Difficult.resolve_model_from_config(&config),
+        "custom-sol"
+    );
 }
+
+#[test]
+fn parses_json_ready_delegate() {
+    let json_resp = r#"{
+        "status": "ready",
+        "route": "delegate",
+        "plan_summary": "Arquitetura modular",
+        "tasks": [
+            {
+                "name": "task1",
+                "complexity": "trivial",
+                "relevant_context": "ctx1",
+                "task": "do task 1",
+                "constraints": "none",
+                "acceptance_tests": "cargo test"
+            }
+        ]
+    }"#;
+
+    let status = parse_architect_response(json_resp);
+    let expected = ArchitectStatus::Ready(RoutingDecision::Delegate {
+        plan_summary: "Arquitetura modular".to_string(),
+        tasks: vec![Subtask {
+            name: "task1".to_string(),
+            complexity: WorkerComplexity::Trivial,
+            relevant_context: "ctx1".to_string(),
+            task: "do task 1".to_string(),
+            constraints: "none".to_string(),
+            acceptance_tests: "cargo test".to_string(),
+        }],
+    });
+    assert_eq!(status, expected);
+}
+
+#[test]
+fn parses_json_escalate() {
+    let json_resp = r#"{
+        "status": "escalate",
+        "reason": "Concorrência com locks inseguros em 3 subsistemas",
+        "findings": [
+            "Subsistema A usa unsafe",
+            "Subsistema B tem race condition"
+        ]
+    }"#;
+
+    let status = parse_architect_response(json_resp);
+    assert_eq!(
+        status,
+        ArchitectStatus::Escalate {
+            reason: "Concorrência com locks inseguros em 3 subsistemas".to_string(),
+            findings: vec![
+                "Subsistema A usa unsafe".to_string(),
+                "Subsistema B tem race condition".to_string(),
+            ],
+        }
+    );
+}
+
+#[test]
+fn parses_textual_escalate() {
+    let text = r#"
+STATUS: ESCALATE
+REASON: Requer redesign de ownership entre múltiplos módulos
+FINDINGS:
+- Módulo 1 precisa de Arc<RwLock>
+- Módulo 2 tem ciclo de referências
+"#;
+
+    let status = parse_architect_response(text);
+    assert_eq!(
+        status,
+        ArchitectStatus::Escalate {
+            reason: "Requer redesign de ownership entre múltiplos módulos".to_string(),
+            findings: vec![
+                "Módulo 1 precisa de Arc<RwLock>".to_string(),
+                "Módulo 2 tem ciclo de referências".to_string(),
+            ],
+        }
+    );
+}
+

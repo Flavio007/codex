@@ -1338,10 +1338,53 @@ impl Default for MultiAgentV2Config {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactMode {
+    Off,
+    Auto,
+    Always,
+}
+
+impl CompactMode {
+    pub fn parse_str(s: &str) -> Self {
+        match s.trim().to_lowercase().as_str() {
+            "off" | "false" | "none" => Self::Off,
+            "always" | "true" => Self::Always,
+            _ => Self::Auto,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HandoffMode {
+    Summary,
+    Compact,
+}
+
+impl HandoffMode {
+    pub fn parse_str(s: &str) -> Self {
+        match s.trim().to_lowercase().as_str() {
+            "summary" | "text" => Self::Summary,
+            _ => Self::Compact,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AdaptivePipelineConfig {
     pub context_model: String,
     pub architect_model: String,
+    pub compact_mode: CompactMode,
+    pub compact_threshold: usize,
+    pub architect_auto_min: String,
+    pub architect_auto_max: String,
+    pub architect_auto_escalation: bool,
+    pub trivial_worker_model: String,
+    pub normal_worker_model: String,
+    pub difficult_worker_model: String,
+    pub handoff_mode: HandoffMode,
     pub worker_model: String,
     pub compact_before_architect: bool,
     pub context_threshold: usize,
@@ -1351,7 +1394,16 @@ impl Default for AdaptivePipelineConfig {
     fn default() -> Self {
         Self {
             context_model: "gpt-5.6-luna".to_string(),
-            architect_model: "gpt-6-astra".to_string(),
+            architect_model: "auto".to_string(),
+            compact_mode: CompactMode::Auto,
+            compact_threshold: 30000,
+            architect_auto_min: "gpt-5.6-luna".to_string(),
+            architect_auto_max: "gpt-6-astra".to_string(),
+            architect_auto_escalation: true,
+            trivial_worker_model: "gpt-5.6-luna".to_string(),
+            normal_worker_model: "gpt-5.6-terra".to_string(),
+            difficult_worker_model: "gpt-5.6-sol".to_string(),
+            handoff_mode: HandoffMode::Compact,
             worker_model: "gpt-5.6-terra".to_string(),
             compact_before_architect: true,
             context_threshold: 30000,
@@ -2803,6 +2855,32 @@ fn resolve_multi_agent_v2_config(config_toml: &ConfigToml) -> MultiAgentV2Config
 fn resolve_adaptive_pipeline_config(config_toml: &ConfigToml) -> AdaptivePipelineConfig {
     let base = config_toml.adaptive_pipeline.as_ref();
     let default = AdaptivePipelineConfig::default();
+
+    let compact_threshold = base
+        .and_then(|c| c.compact_threshold.or(c.context_threshold))
+        .unwrap_or(default.compact_threshold);
+
+    let compact_mode = if let Some(mode_str) = base.and_then(|c| c.compact_mode.as_deref()) {
+        CompactMode::parse_str(mode_str)
+    } else if let Some(legacy_compact) = base.and_then(|c| c.compact_before_architect) {
+        if legacy_compact {
+            CompactMode::Auto
+        } else {
+            CompactMode::Off
+        }
+    } else {
+        default.compact_mode
+    };
+
+    let handoff_mode = base
+        .and_then(|c| c.handoff_mode.as_deref())
+        .map(HandoffMode::parse_str)
+        .unwrap_or(default.handoff_mode);
+
+    let normal_worker = base
+        .and_then(|c| c.normal_worker_model.clone().or_else(|| c.worker_model.clone()))
+        .unwrap_or(default.normal_worker_model);
+
     AdaptivePipelineConfig {
         context_model: base
             .and_then(|c| c.context_model.clone())
@@ -2810,15 +2888,28 @@ fn resolve_adaptive_pipeline_config(config_toml: &ConfigToml) -> AdaptivePipelin
         architect_model: base
             .and_then(|c| c.architect_model.clone())
             .unwrap_or(default.architect_model),
-        worker_model: base
-            .and_then(|c| c.worker_model.clone())
-            .unwrap_or(default.worker_model),
-        compact_before_architect: base
-            .and_then(|c| c.compact_before_architect)
-            .unwrap_or(default.compact_before_architect),
-        context_threshold: base
-            .and_then(|c| c.context_threshold)
-            .unwrap_or(default.context_threshold),
+        compact_mode,
+        compact_threshold,
+        architect_auto_min: base
+            .and_then(|c| c.architect_auto_min.clone())
+            .unwrap_or(default.architect_auto_min),
+        architect_auto_max: base
+            .and_then(|c| c.architect_auto_max.clone())
+            .unwrap_or(default.architect_auto_max),
+        architect_auto_escalation: base
+            .and_then(|c| c.architect_auto_escalation)
+            .unwrap_or(default.architect_auto_escalation),
+        trivial_worker_model: base
+            .and_then(|c| c.trivial_worker_model.clone())
+            .unwrap_or(default.trivial_worker_model),
+        normal_worker_model: normal_worker.clone(),
+        difficult_worker_model: base
+            .and_then(|c| c.difficult_worker_model.clone())
+            .unwrap_or(default.difficult_worker_model),
+        handoff_mode,
+        worker_model: normal_worker,
+        compact_before_architect: compact_mode != CompactMode::Off,
+        context_threshold: compact_threshold,
     }
 }
 

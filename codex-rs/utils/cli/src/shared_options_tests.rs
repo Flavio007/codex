@@ -67,3 +67,39 @@ fn pipeline_off_override_disables_feature() {
     assert_eq!(options.pipeline, None);
 }
 
+#[test]
+fn architect_model_override_sets_config() {
+    use crate::CliConfigOverrides;
+
+    let mut options = SharedCliOptions {
+        architect_model: Some("gpt-5.6-sol".to_string()),
+        ..Default::default()
+    };
+    let mut overrides = CliConfigOverrides::default();
+    options.take_auto_review_config_overrides(&mut overrides);
+
+    assert_eq!(
+        overrides.raw_overrides,
+        vec!["adaptive_pipeline.architect_model=\"gpt-5.6-sol\"".to_string()]
+    );
+    assert_eq!(options.architect_model, None);
+}
+
+#[test]
+fn pipeline_compact_override_sets_config() {
+    use super::PipelineCompactCliArg;
+    use crate::CliConfigOverrides;
+
+    let mut options = SharedCliOptions {
+        pipeline_compact: Some(PipelineCompactCliArg::Always),
+        ..Default::default()
+    };
+    let mut overrides = CliConfigOverrides::default();
+    options.take_auto_review_config_overrides(&mut overrides);
+
+    assert_eq!(
+        overrides.raw_overrides,
+        vec!["adaptive_pipeline.compact_mode=\"always\"".to_string()]
+    );
+    assert_eq!(options.pipeline_compact, None);
+}

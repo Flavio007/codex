@@ -3,6 +3,8 @@
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::config::AdaptivePipelineConfig;
+
 #[cfg(test)]
 #[path = "routing_tests.rs"]
 mod tests;
@@ -26,6 +28,15 @@ impl WorkerComplexity {
             Self::Trivial => "gpt-5.6-luna",
             Self::Normal => "gpt-5.6-terra",
             Self::Difficult => "gpt-5.6-sol",
+        }
+    }
+
+    /// Resolves target model from adaptive pipeline configuration.
+    pub fn resolve_model_from_config(self, config: &AdaptivePipelineConfig) -> String {
+        match self {
+            Self::Trivial => config.trivial_worker_model.clone(),
+            Self::Normal => config.normal_worker_model.clone(),
+            Self::Difficult => config.difficult_worker_model.clone(),
         }
     }
 
@@ -72,14 +83,32 @@ pub struct Subtask {
     pub acceptance_tests: String,
 }
 
+/// Status and routing decision returned by the Architect.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ArchitectStatus {
+    /// Architect has completed design and decided the execution strategy.
+    Ready(RoutingDecision),
+    /// Architect requests escalation to a higher tier model due to complexity.
+    Escalate {
+        reason: String,
+        findings: Vec<String>,
+    },
+}
+
+impl ArchitectStatus {
+    pub fn is_escalate(&self) -> bool {
+        matches!(self, Self::Escalate { .. })
+    }
+}
+
 /// Structured decision returned by the Architect (Astra).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RoutingDecision {
-    /// Astra implements the solution directly without delegating to workers.
+    /// Architect implements the solution directly without delegating to workers.
     Direct {
         raw_response: String,
     },
-    /// Astra delegates the solution to one or more workers based on a task plan.
+    /// Architect delegates the solution to one or more workers based on a task plan.
     Delegate {
         plan_summary: String,
         tasks: Vec<Subtask>,
@@ -94,6 +123,110 @@ impl RoutingDecision {
     pub fn is_delegate(&self) -> bool {
         matches!(self, Self::Delegate { .. })
     }
+}
+
+/// Parses the Architect's response, supporting structured JSON or legacy text formatting.
+pub fn parse_architect_response(response: &str) -> ArchitectStatus {
+    let trimmed = response.trim();
+
+    // 1. Try direct JSON parse
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed)
+        && let Some(status) = parse_json_architect_value(&val)
+    {
+        return status;
+    }
+
+    // 2. Try fenced ```json block
+    if let Some(json_start) = trimmed.find("```json") {
+        let after_start = &trimmed[json_start + 7..];
+        if let Some(json_end) = after_start.find("```") {
+            let json_slice = after_start[..json_end].trim();
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_slice)
+                && let Some(status) = parse_json_architect_value(&val)
+            {
+                return status;
+            }
+        }
+    }
+
+    // 3. Textual escalation check: STATUS: ESCALATE
+    if let Some(esc_idx) = trimmed.find("STATUS: ESCALATE") {
+        let after_esc = &trimmed[esc_idx + "STATUS: ESCALATE".len()..];
+        let reason = extract_field_value(after_esc, "REASON:");
+        let reason = if reason.is_empty() {
+            "Architect requested escalation".to_string()
+        } else {
+            reason
+        };
+        let findings_text = extract_multiline_field(after_esc, "FINDINGS:", &[]);
+        let findings = findings_text
+            .lines()
+            .map(|l| l.trim().trim_start_matches('-').trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect();
+
+        return ArchitectStatus::Escalate { reason, findings };
+    }
+
+    // 4. Default: parse standard routing decision
+    ArchitectStatus::Ready(parse_routing_decision(response))
+}
+
+fn parse_json_architect_value(val: &serde_json::Value) -> Option<ArchitectStatus> {
+    let obj = val.as_object()?;
+    let status_str = obj.get("status").and_then(|s| s.as_str()).unwrap_or("ready");
+
+    if status_str.eq_ignore_ascii_case("escalate") {
+        let reason = obj
+            .get("reason")
+            .and_then(|r| r.as_str())
+            .unwrap_or("Requested escalation")
+            .to_string();
+        let findings = obj
+            .get("findings")
+            .and_then(|f| f.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        return Some(ArchitectStatus::Escalate { reason, findings });
+    }
+
+    let route_str = obj.get("route").and_then(|r| r.as_str()).unwrap_or("direct");
+    if route_str.eq_ignore_ascii_case("delegate") {
+        let plan_summary = obj
+            .get("plan_summary")
+            .and_then(|p| p.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let tasks = obj
+            .get("tasks")
+            .and_then(|t| serde_json::from_value::<Vec<Subtask>>(t.clone()).ok())
+            .unwrap_or_default();
+        if !tasks.is_empty() {
+            return Some(ArchitectStatus::Ready(RoutingDecision::Delegate {
+                plan_summary,
+                tasks,
+            }));
+        }
+    }
+
+    let raw_response = obj
+        .get("response")
+        .or_else(|| obj.get("implementation"))
+        .and_then(|r| r.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    Some(ArchitectStatus::Ready(RoutingDecision::Direct {
+        raw_response: if raw_response.is_empty() {
+            val.to_string()
+        } else {
+            raw_response
+        },
+    }))
 }
 
 /// Parses Astra's response into a structured `RoutingDecision`.

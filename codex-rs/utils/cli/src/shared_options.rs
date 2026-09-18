@@ -78,6 +78,14 @@ pub struct SharedCliOptions {
     /// Execution pipeline mode: `off` (standard single model) or `adaptive` (multi-phase adaptive pipeline).
     #[arg(long = "pipeline", value_enum)]
     pub pipeline: Option<PipelineModeCliArg>,
+
+    /// Model to use for the architect phase in adaptive pipeline, or "auto".
+    #[arg(long = "architect-model", value_name = "MODEL")]
+    pub architect_model: Option<String>,
+
+    /// Compaction mode before architect handoff: `off`, `auto`, or `always`.
+    #[arg(long = "pipeline-compact", value_enum)]
+    pub pipeline_compact: Option<PipelineCompactCliArg>,
 }
 
 /// Pipeline mode command-line argument for A/B testing.
@@ -87,6 +95,17 @@ pub enum PipelineModeCliArg {
     Off,
     /// Enable multi-phase adaptive pipeline (Context Builder -> Compaction -> Architect -> Workers).
     Adaptive,
+}
+
+/// Pipeline compact mode command-line argument for A/B testing.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PipelineCompactCliArg {
+    /// Never compact context before architect.
+    Off,
+    /// Automatically compact when context threshold is reached.
+    Auto,
+    /// Always compact context before architect.
+    Always,
 }
 
 impl SharedCliOptions {
@@ -118,6 +137,21 @@ impl SharedCliOptions {
             }
             self.pipeline = None;
         }
+        if let Some(architect_model) = self.architect_model.take() {
+            overrides.raw_overrides.push(format!(
+                "adaptive_pipeline.architect_model=\"{architect_model}\""
+            ));
+        }
+        if let Some(compact) = self.pipeline_compact.take() {
+            let mode = match compact {
+                PipelineCompactCliArg::Off => "off",
+                PipelineCompactCliArg::Auto => "auto",
+                PipelineCompactCliArg::Always => "always",
+            };
+            overrides
+                .raw_overrides
+                .push(format!("adaptive_pipeline.compact_mode=\"{mode}\""));
+        }
     }
 
     pub fn inherit_exec_root_options(&mut self, root: &Self) {
@@ -138,6 +172,8 @@ impl SharedCliOptions {
             worktree,
             add_dir,
             pipeline,
+            architect_model,
+            pipeline_compact,
         } = self;
         let Self {
             images: root_images,
@@ -153,10 +189,18 @@ impl SharedCliOptions {
             worktree: root_worktree,
             add_dir: root_add_dir,
             pipeline: root_pipeline,
+            architect_model: root_architect_model,
+            pipeline_compact: root_pipeline_compact,
         } = root;
 
         if pipeline.is_none() {
             pipeline.clone_from(root_pipeline);
+        }
+        if architect_model.is_none() {
+            architect_model.clone_from(root_architect_model);
+        }
+        if pipeline_compact.is_none() {
+            pipeline_compact.clone_from(root_pipeline_compact);
         }
 
         if model.is_none() {
@@ -214,10 +258,18 @@ impl SharedCliOptions {
             worktree,
             add_dir,
             pipeline,
+            architect_model,
+            pipeline_compact,
         } = subcommand;
 
         if let Some(pipeline) = pipeline {
             self.pipeline = Some(pipeline);
+        }
+        if let Some(architect_model) = architect_model {
+            self.architect_model = Some(architect_model);
+        }
+        if let Some(pipeline_compact) = pipeline_compact {
+            self.pipeline_compact = Some(pipeline_compact);
         }
 
         if let Some(model) = model {

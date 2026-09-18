@@ -143,6 +143,7 @@ pub(crate) async fn run_inline_auto_compact_task(
     Ok(())
 }
 
+#[allow(dead_code)]
 pub(crate) async fn run_compact_task(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
@@ -162,6 +163,125 @@ pub(crate) async fn run_compact_task(
     Ok(())
 }
 
+pub(crate) async fn run_compact_task_with_summary(
+    sess: Arc<Session>,
+    turn_context: Arc<TurnContext>,
+    input: Vec<UserInput>,
+    trigger: CompactionTrigger,
+) -> CodexResult<String> {
+    sess.emit_turn_started(&turn_context).await;
+    let reason = match trigger {
+        CompactionTrigger::Auto => CompactionReason::ContextLimit,
+        _ => CompactionReason::UserRequested,
+    };
+    run_compact_task_inner(
+        sess.clone(),
+        turn_context,
+        input,
+        InitialContextInjection::DoNotInject,
+        trigger,
+        reason,
+        CompactionPhase::StandaloneTurn,
+    )
+    .await
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CompactionOutcome {
+    pub summary: String,
+    pub tokens_before: i64,
+    pub tokens_after: i64,
+    pub implementation: CompactionImplementation,
+}
+
+/// Unified entry point for compacting a session, used by both manual /compact and adaptive pipeline.
+pub(crate) async fn compact_session(
+    session: Arc<Session>,
+    ctx: Arc<TurnContext>,
+    trigger: CompactionTrigger,
+) -> CodexResult<CompactionOutcome> {
+    let tokens_before = {
+        let usage = session.get_total_token_usage().await;
+        if usage > 0 {
+            usage
+        } else {
+            session
+                .clone_history()
+                .await
+                .estimate_token_count(&ctx)
+                .unwrap_or(0)
+        }
+    };
+
+    if ctx.config.features.enabled(codex_features::Feature::TokenBudget) {
+        crate::compact_token_budget::run_manual_compact_task(session.clone(), ctx.clone()).await?;
+        let tokens_after = session.get_total_token_usage().await;
+        return Ok(CompactionOutcome {
+            summary: String::new(),
+            tokens_before,
+            tokens_after,
+            implementation: CompactionImplementation::Responses,
+        });
+    }
+
+    let is_manual = matches!(trigger, CompactionTrigger::Manual);
+    let (summary, implementation) = match ctx.provider.capabilities().remote_compaction {
+        codex_model_provider::RemoteCompactionSupport::V2 => {
+            crate::tasks::emit_compact_metric(
+                &session.services.session_telemetry,
+                "remote_v2",
+                is_manual,
+            );
+            crate::compact_remote_v2::run_remote_compact_task(session.clone(), ctx.clone()).await?;
+            (String::new(), CompactionImplementation::ResponsesCompactionV2)
+        }
+        codex_model_provider::RemoteCompactionSupport::Unsupported => {
+            crate::tasks::emit_compact_metric(
+                &session.services.session_telemetry,
+                "local",
+                is_manual,
+            );
+            let input = vec![UserInput::Text {
+                text: ctx
+                    .config
+                    .compact_prompt
+                    .as_deref()
+                    .unwrap_or(crate::compact::SUMMARIZATION_PROMPT)
+                    .to_string(),
+                text_elements: Vec::new(),
+            }];
+            let summary = run_compact_task_with_summary(
+                session.clone(),
+                ctx.clone(),
+                input,
+                trigger,
+            )
+            .await?;
+            (summary, CompactionImplementation::Responses)
+        }
+    };
+
+    let tokens_after = {
+        let usage = session.get_total_token_usage().await;
+        if usage > 0 {
+            usage
+        } else {
+            session
+                .clone_history()
+                .await
+                .estimate_token_count(&ctx)
+                .unwrap_or(0)
+        }
+    };
+
+    Ok(CompactionOutcome {
+        summary,
+        tokens_before,
+        tokens_after,
+        implementation,
+    })
+}
+
 async fn run_compact_task_inner(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
@@ -170,7 +290,7 @@ async fn run_compact_task_inner(
     trigger: CompactionTrigger,
     reason: CompactionReason,
     phase: CompactionPhase,
-) -> CodexResult<()> {
+) -> CodexResult<String> {
     let compaction_metadata =
         CompactionTurnMetadata::new(trigger, reason, CompactionImplementation::Responses, phase);
     let attempt = CompactionAnalyticsAttempt::begin(
@@ -230,7 +350,7 @@ async fn run_compact_task_inner(
             CompactionAnalyticsDetails::default(),
         )
         .await;
-    result.map(|_| ())
+    result
 }
 
 async fn run_compact_task_inner_impl(

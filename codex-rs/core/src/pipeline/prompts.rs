@@ -1,4 +1,61 @@
-//! Prompts and template formatters for the adaptive model pipeline.
+use serde_json::json;
+
+use super::architect_selector::ScoutAssessment;
+use super::compaction::ArchitectContext;
+
+/// Record of an architect escalation from a lower tier model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EscalationAttempt {
+    pub from_model: String,
+    pub reason: String,
+    pub findings: Vec<String>,
+}
+
+/// JSON schema enforced for Scout structured outputs.
+pub fn scout_assessment_json_schema() -> serde_json::Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "handoff": {
+                "type": "string",
+                "description": "Comprehensive technical summary of findings in # HANDOFF_SUMMARY format."
+            },
+            "assessment": {
+                "type": "object",
+                "properties": {
+                    "estimated_files": { "type": "integer", "minimum": 1 },
+                    "estimated_subsystems": { "type": "integer", "minimum": 1 },
+                    "estimated_tasks": { "type": "integer", "minimum": 1 },
+                    "cross_cutting": { "type": "boolean" },
+                    "architectural_change": { "type": "boolean" },
+                    "concurrency_or_unsafe": { "type": "boolean" },
+                    "performance_sensitive": { "type": "boolean" },
+                    "public_api_change": { "type": "boolean" },
+                    "migration_required": { "type": "boolean" },
+                    "ambiguity": {
+                        "type": "string",
+                        "enum": ["low", "medium", "high"]
+                    }
+                },
+                "required": [
+                    "estimated_files",
+                    "estimated_subsystems",
+                    "estimated_tasks",
+                    "cross_cutting",
+                    "architectural_change",
+                    "concurrency_or_unsafe",
+                    "performance_sensitive",
+                    "public_api_change",
+                    "migration_required",
+                    "ambiguity"
+                ],
+                "additionalProperties": false
+            }
+        },
+        "required": ["handoff", "assessment"],
+        "additionalProperties": false
+    })
+}
 
 /// System instructions for the exploration / context builder phase.
 pub const CONTEXT_BUILDER_SYSTEM_PROMPT: &str = r#"Você é o Context Builder em um pipeline colaborativo de múltiplos modelos.
@@ -15,77 +72,35 @@ Instruções fundamentais:
    - Testes relacionados existentes;
    - Restrições arquiteturais, de estilo e de desempenho.
 3. NÃO implemente a solução nem altere arquivos de código nesta etapa.
-4. Ao concluir toda a investigação, produza obrigatoriamente um bloco estruturado no formato:
+4. Ao concluir toda a investigação, produza a resposta no formato JSON estruturado contendo:
+   - "handoff": O relatório técnico completo no formato # HANDOFF_SUMMARY.
+   - "assessment": A avaliação quantitativa de sinais de complexidade (estimated_files, estimated_subsystems, estimated_tasks, cross_cutting, architectural_change, concurrency_or_unsafe, performance_sensitive, public_api_change, migration_required, ambiguity).
 
-```markdown
-# HANDOFF_SUMMARY
-## Requisitos e Escopo
-<detalhes>
-
-## Arquivos e Símbolos Relevantes
-<lista detalhada>
-
-## Arquitetura e Dependências
-<análise arquitetural>
-
-## Diagnósticos e Problemas Identificados
-<bugs e riscos>
-
-## Testes Relacionados
-<testes existentes e comandos de validação>
-
-## Restrições
-<regras e restrições a seguir>
-```
-
-Seja minucioso, detalhado e conciso nas referências técnicas para que o próximo agente tenha tudo o que precisa sem precisar explorar o repositório do zero."#;
+Seja minucioso, detalhado e conciso nas referências técnicas."#;
 
 /// System instructions for the Architect phase.
 pub const ARCHITECT_SYSTEM_PROMPT: &str = r#"Você é o Architect em um pipeline colaborativo adaptativo de modelos de IA.
-Você recebe o pedido original do usuário e o resumo técnico consolidado (HANDOFF_SUMMARY) produzido pelo Context Builder.
+Sua responsabilidade é avaliar criticamente a complexidade da demanda e decidir a estratégia ótima de execução.
 
-Sua responsabilidade é avaliar criticamente a complexidade da demanda e decidir a estratégia ótima de execução:
+Se julgar que a tarefa excede sua capacidade analítica (por exemplo, exigindo redesign global, concorrência complexa ou incerteza crítica não resolvida):
+Você pode solicitar escalonamento para o próximo nível de modelo respondendo com:
+{
+  "status": "escalate",
+  "reason": "<motivo específico do escalonamento>",
+  "findings": ["<fato ou insight 1>", "<fato ou insight 2>"]
+}
+(Ou em formato texto: STATUS: ESCALATE\nREASON: <motivo>\nFINDINGS:\n- <fato 1>)
 
-Decisão de Roteamento:
+Caso decida prosseguir (status = "ready"):
 - Se a tarefa for simples, direta ou envolver poucas alterações concentradas:
-  Responda iniciando com:
-  ROUTE: DIRECT
-
-  E em seguida prossiga implementando a solução completa, validando os testes e apresentando a resposta final ao usuário.
-
-- Se a tarefa for complexa, multifacetada ou beneficiar-se de divisão em etapas atômicas:
-  Responda iniciando com:
-  ROUTE: DELEGATE
-
-  E produza uma decomposição estruturada de tarefas para os workers no seguinte formato rigoroso:
-
-ROUTE: DELEGATE
-PLAN_SUMMARY: <resumo executivo do plano>
-TASKS:
----
-TASK_NAME: <identificador da tarefa>
-COMPLEXITY: <trivial | normal | difficult>
-RELEVANT_CONTEXT: <contexto estritamente necessário extraído do handoff>
-TASK: <instrução detalhada de implementação>
-CONSTRAINTS: <regras e restrições técnicas>
-ACCEPTANCE_TESTS: <testes ou validações que devem ser aprovados>
----
+  Responda com ROUTE: DIRECT (ou JSON com "status": "ready", "route": "direct") e implemente a solução.
+- Se a tarefa for complexa ou decomponível:
+  Responda com ROUTE: DELEGATE (ou JSON com "status": "ready", "route": "delegate", "plan_summary": "...", "tasks": [...]).
 
 Classificação de Complexidade dos Workers:
-- trivial: mudanças simples, refatorações menores, documentação, wrappers (executado por Luna).
-- normal: implementação padrão de componentes, lógica de negócio, criação de endpoints ou módulos (executado por Terra).
-- difficult: algoritmos intrincados, concorrência, interfaces críticas ou otimizações de baixo nível (executado por Sol)."#;
-
-/// Compaction prompt optimized for preserving code context, symbols, and architectural findings.
-pub const COMPACT_PROGRAMMING_PROMPT: &str = r#"Você é um especialista em síntese de contexto para engenharia de software.
-Comprima o histórico da conversa preservando fielmente:
-1. O objetivo exato do usuário e critérios de aceitação.
-2. Todos os arquivos, caminhos, funções, structs e símbolos identificados como relevantes.
-3. Decisões arquiteturais, restrições e convenções do projeto.
-4. Testes existentes e hipóteses de solução.
-5. O HANDOFF_SUMMARY completo e íntegro.
-
-Descarte mensagens repetidas, saídas brutas de ferramentas desnecessárias e preâmbulos conversacionais."#;
+- trivial: mudanças simples, refatorações menores, documentação (executado por worker trivial).
+- normal: implementação padrão de componentes, lógica de negócio (executado por worker normal).
+- difficult: algoritmos intrincados, concorrência, interfaces críticas (executado por worker difficult)."#;
 
 /// Formats the context builder user input with the user request.
 pub fn context_builder_user_prompt(user_prompt: &str) -> String {
@@ -93,20 +108,61 @@ pub fn context_builder_user_prompt(user_prompt: &str) -> String {
         "Investigue o seguinte pedido do usuário no repositório:\n\n\
          {user_prompt}\n\n\
          Lembre-se: localize todos os arquivos relevantes, símbolos, arquitetura afetada, dependências, \
-         bugs, testes e restrições. NÃO implemente ainda. Conclua gerando o HANDOFF_SUMMARY."
+         bugs, testes e restrições. NÃO implemente ainda. Conclua gerando o JSON com handoff e assessment."
     )
 }
 
-/// Formats the input for Astra (Architect), combining user prompt, handoff summary, and instructions.
-pub fn architect_input_prompt(user_prompt: &str, handoff_summary: &str) -> String {
-    format!(
-        "### Pedido Original do Usuário\n\
-         {user_prompt}\n\n\
-         ### Resumo de Investigação (HANDOFF_SUMMARY)\n\
-         {handoff_summary}\n\n\
-         Avalie o pedido e o resumo técnico. Escolha entre `ROUTE: DIRECT` ou `ROUTE: DELEGATE` \
-         conforme as instruções do sistema."
-    )
+/// Formats the input prompt for the Architect with technical context and optional escalation history.
+pub fn architect_context_prompt(
+    user_prompt: &str,
+    context: &ArchitectContext,
+    assessment: &ScoutAssessment,
+    previous_escalation: Option<&EscalationAttempt>,
+) -> String {
+    let mut prompt = format!("### Pedido Original do Usuário\n{user_prompt}\n\n");
+
+    match context {
+        ArchitectContext::ExplicitHandoff { handoff } => {
+            prompt.push_str(&format!(
+                "### Resumo de Investigação (HANDOFF_SUMMARY)\n{handoff}\n\n"
+            ));
+        }
+        ArchitectContext::CompactedHistory { handoff_summary, .. } => {
+            prompt.push_str(
+                "### Contexto de Investigação\n\
+                 O histórico completo da investigação do Scout foi compactado nativamente e está \
+                 disponível no histórico desta sessão.\n\n",
+            );
+            if let Some(summary) = handoff_summary {
+                prompt.push_str(&format!("### Destaques do Handoff\n{summary}\n\n"));
+            }
+        }
+    }
+
+    prompt.push_str(&format!(
+        "### Avaliação Técnica de Complexidade\n{}\n\n",
+        assessment.format_summary()
+    ));
+
+    if let Some(esc) = previous_escalation {
+        prompt.push_str(&format!(
+            "### Tentativa Anterior do Architect ({})\n\
+             Motivo da Escalação: {}\n\
+             Descobertas Prévias:\n",
+            esc.from_model, esc.reason
+        ));
+        for finding in &esc.findings {
+            prompt.push_str(&format!("- {finding}\n"));
+        }
+        prompt.push('\n');
+    }
+
+    prompt.push_str(
+        "Avalie o pedido e os dados técnicos. Decida entre prosseguir (`ROUTE: DIRECT` ou `ROUTE: DELEGATE`) \
+         ou solicitar escalonamento caso o escopo exceda sua capacidade analítica.",
+    );
+
+    prompt
 }
 
 /// Formats the isolated task prompt sent to a worker with `fork_turns=\"none\"`.
@@ -127,3 +183,4 @@ pub fn worker_task_prompt(
          {acceptance_tests}"
     )
 }
+

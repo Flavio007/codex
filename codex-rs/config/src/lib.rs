@@ -49,7 +49,6 @@ pub const CONFIG_TOML_FILE: &str = "config.toml";
 
 pub use application_requirements::ApplicationNetworkRequirementsToml;
 pub use application_requirements::ApplicationRequirementsToml;
-pub use config_toml::AdaptivePipelineConfigToml;
 pub use auth_policy::ManagedAuthPolicy;
 pub use browser_computer_use_requirements::AllowDenyRequirementToml;
 pub use browser_computer_use_requirements::BrowserUseAccessApprovalLifetimeToml;
@@ -129,6 +128,7 @@ pub use config_requirements::WebSearchModeRequirement;
 pub use config_requirements::WindowsRequirementsToml;
 pub use config_requirements::WindowsSandboxImplementationToml;
 pub use config_requirements::sandbox_mode_requirement_for_permission_profile;
+pub use config_toml::AdaptivePipelineConfigToml;
 pub use constraint::Constrained;
 pub use constraint::ConstraintError;
 pub use constraint::ConstraintResult;
